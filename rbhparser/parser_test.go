@@ -79,6 +79,53 @@ func makeBagsLaunchLog(t testing.TB, token, curve common.Address, poolID common.
 	}
 }
 
+func TestParsePAIRMultipleQuotePoolsInOneReceipt(t *testing.T) {
+	parsed := New()
+	token := common.HexToAddress("0x20")
+	quotes := []common.Address{common.HexToAddress("0x10"), common.HexToAddress("0x11")}
+	logs := make([]*gethtypes.Log, 0, 4)
+	ids := make([]common.Hash, 0, 2)
+	for index, quote := range quotes {
+		key := PoolKey{Currency0: quote, Currency1: token, Fee: 3000, TickSpacing: 60}
+		id, err := PoolID(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		initialized := makeInitializeLog(t, key, uint(index*2+1))
+		data, err := abiArguments(t, "uint256", "uint16", "uint256", "int24", "int24", "uint160", "uint256").Pack(
+			big.NewInt(1), uint16(100), big.NewInt(1), big.NewInt(-60), big.NewInt(60), big.NewInt(1), big.NewInt(1),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		launched := gethtypes.Log{
+			Address: DefaultAddressBook().PAIRLaunchpad,
+			Topics:  []common.Hash{TopicPAIRPool, addressTopic(token), addressTopic(quote), id},
+			Data:    data,
+			Index:   uint(index*2 + 2),
+		}
+		logs = append(logs, &initialized, &launched)
+	}
+
+	events, err := parsed.ParseReceipt(&gethtypes.Receipt{Logs: logs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("events = %d, want 4", len(events))
+	}
+	for index, id := range ids {
+		registration, ok := parsed.Registry().LookupPool(id)
+		if !ok || registration.Protocol != ProtocolPAIR || registration.Token != token || registration.Quote != quotes[index] {
+			t.Fatalf("PAIR pool %d missing or misattributed: %#v ok=%t", index, registration, ok)
+		}
+	}
+	if _, err := parsed.ParseReceipt(&gethtypes.Receipt{Logs: logs}); err != nil {
+		t.Fatalf("idempotent receipt replay: %v", err)
+	}
+}
+
 func TestParseLongLaunchInitializeAndFirstSwap(t *testing.T) {
 	parser := New()
 	addresses := DefaultAddressBook()

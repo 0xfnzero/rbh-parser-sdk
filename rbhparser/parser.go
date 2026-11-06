@@ -514,8 +514,17 @@ func (p *Parser) launchEvent(log gethtypes.Log, protocol Protocol, launch Launch
 		return Event{}, false, fmt.Errorf("decode %s launch: %w", protocol, ErrMalformedLog)
 	}
 	staged := p.registry.fork()
-	if err := staged.RegisterToken(TokenRegistration{Token: launch.Token, Protocol: launch.Protocol, Quote: launch.Quote, Venue: launch.Venue}); err != nil {
-		return Event{}, false, err
+	// PAIR can create several V4 pools for one token with distinct quotes in a
+	// single receipt. TokenRegistration has one quote slot; keep its first
+	// attribution and use the PoolID-keyed pending/pool records for each venue.
+	prior, known := staged.LookupToken(launch.Token)
+	additionalPAIRPool := protocol == ProtocolPAIR && launch.PoolID != (common.Hash{}) && known &&
+		prior.Protocol == ProtocolPAIR && prior.Quote != (common.Address{}) && launch.Quote != (common.Address{}) &&
+		prior.Quote != launch.Quote && prior.Venue == (common.Address{}) && launch.Venue == (common.Address{})
+	if !additionalPAIRPool {
+		if err := staged.RegisterToken(TokenRegistration{Token: launch.Token, Protocol: launch.Protocol, Quote: launch.Quote, Venue: launch.Venue}); err != nil {
+			return Event{}, false, err
+		}
 	}
 	if launch.Curve != (common.Address{}) {
 		if err := staged.RegisterCurve(CurveRegistration{Curve: launch.Curve, Protocol: launch.Protocol, Token: launch.Token, Quote: launch.Quote}); err != nil {
